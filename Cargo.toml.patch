@@ -1,7 +1,7 @@
 diff --git a/necsim-rust/Cargo.toml b/necsim-rust/Cargo.toml
 --- a/necsim-rust/Cargo.toml
 +++ b/necsim-rust/Cargo.toml
-@@ -32,6 +32,11 @@ members = [
+@@ -32,6 +32,12 @@ members = [
  
      "rust-cuda",
      "rust-cuda/rust-cuda-derive",
@@ -10,6 +10,7 @@ diff --git a/necsim-rust/Cargo.toml b/necsim-rust/Cargo.toml
 +    "analysis/rng/ent",
 +    "analysis/rng/testu01",
 +    "analysis/rng/dieharder",
++    "analysis/rng/randomness/generator",
  ]
  
  default-members = [
