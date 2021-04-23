@@ -1,0 +1,71 @@
+diff --git a/necsim-rust/Cargo.lock b/necsim-rust/Cargo.lock
+--- a/necsim-rust/Cargo.lock
++++ b/necsim-rust/Cargo.lock
+@@ -53,6 +53,38 @@ dependencies = [
+  "memchr",
+ ]
+ 
++[[package]]
++name = "analysis-rng-correlation"
++version = "0.1.0"
++dependencies = [
++ "contracts",
++ "necsim-core",
++ "necsim-impls-no-std",
++ "structopt",
++]
++
++[[package]]
++name = "analysis-rng-hash"
++version = "0.1.0"
++dependencies = [
++ "necsim-core",
++ "necsim-impls-no-std",
++ "rand",
++ "structopt",
++]
++
++[[package]]
++name = "analysis-rng-randomness"
++version = "0.1.0"
++dependencies = [
++ "byte-unit",
++ "contracts",
++ "necsim-core",
++ "necsim-impls-no-std",
++ "necsim-impls-std",
++ "structopt",
++]
++
+ [[package]]
+ name = "ansi_term"
+ version = "0.11.0"
+@@ -175,6 +207,15 @@ dependencies = [
+  "pkg-config",
+ ]
+ 
++[[package]]
++name = "byte-unit"
++version = "4.0.11"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "26d98e67b09c0321733bef2f3b879832afa6197e9ea58f32e72c316df2ffe743"
++dependencies = [
++ "utf8-width",
++]
++
+ [[package]]
+ name = "byteorder"
+ version = "1.4.3"
+@@ -1469,6 +1510,12 @@ version = "0.2.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "f7fe0bb3479651439c9112f72b6c505038574c9fbb575ed1bf3b797fa39dd564"
+ 
++[[package]]
++name = "utf8-width"
++version = "0.1.5"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "7cf7d77f457ef8dfa11e4cd5933c5ddb5dc52a94664071951219a97710f0a32b"
++
+ [[package]]
+ name = "vec_map"
+ version = "0.8.2"
