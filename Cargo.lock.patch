@@ -1,12 +1,22 @@
 diff --git a/necsim-rust/Cargo.lock b/necsim-rust/Cargo.lock
 --- a/necsim-rust/Cargo.lock
 +++ b/necsim-rust/Cargo.lock
-@@ -53,6 +53,38 @@ dependencies = [
+@@ -53,6 +53,48 @@ dependencies = [
   "memchr",
  ]
  
 +[[package]]
 +name = "analysis-rng-correlation"
++version = "0.1.0"
++dependencies = [
++ "contracts",
++ "necsim-core",
++ "necsim-impls-no-std",
++ "structopt",
++]
++
++[[package]]
++name = "analysis-rng-exponential"
 +version = "0.1.0"
 +dependencies = [
 + "contracts",
@@ -40,7 +50,7 @@ diff --git a/necsim-rust/Cargo.lock b/necsim-rust/Cargo.lock
  [[package]]
  name = "ansi_term"
  version = "0.11.0"
-@@ -175,6 +207,15 @@ dependencies = [
+@@ -175,6 +217,15 @@ dependencies = [
   "pkg-config",
  ]
  
@@ -56,7 +66,7 @@ diff --git a/necsim-rust/Cargo.lock b/necsim-rust/Cargo.lock
  [[package]]
  name = "byteorder"
  version = "1.4.3"
-@@ -1469,6 +1510,12 @@ version = "0.2.1"
+@@ -1469,6 +1520,12 @@ version = "0.2.1"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "f7fe0bb3479651439c9112f72b6c505038574c9fbb575ed1bf3b797fa39dd564"
  
