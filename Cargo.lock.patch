@@ -50,7 +50,7 @@ diff --git a/necsim-rust/Cargo.lock b/necsim-rust/Cargo.lock
  [[package]]
  name = "ansi_term"
  version = "0.11.0"
-@@ -175,6 +217,15 @@ dependencies = [
+@@ -163,6 +205,15 @@ dependencies = [
   "pkg-config",
  ]
  
@@ -66,7 +66,7 @@ diff --git a/necsim-rust/Cargo.lock b/necsim-rust/Cargo.lock
  [[package]]
  name = "byteorder"
  version = "1.4.3"
-@@ -1469,6 +1520,12 @@ version = "0.2.1"
+@@ -1438,6 +1489,12 @@ version = "0.2.1"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "f7fe0bb3479651439c9112f72b6c505038574c9fbb575ed1bf3b797fa39dd564"
  
