@@ -9,7 +9,7 @@ diff --git a/necsim-rust/Cargo.toml b/necsim-rust/Cargo.toml
 +    "analysis/rng/randomness",
 +    "analysis/rng/hash",
 +    "analysis/rng/correlation",
-+    "analysis/rng/exponential",
++    "analysis/performance/exponential",
  ]
  
  default-members = [
