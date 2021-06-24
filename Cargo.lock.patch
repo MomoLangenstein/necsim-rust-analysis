@@ -97,7 +97,7 @@ diff --git a/necsim-rust/Cargo.lock b/necsim-rust/Cargo.lock
  [[package]]
  name = "byteorder"
  version = "1.4.3"
-@@ -1560,6 +1642,12 @@ version = "0.2.2"
+@@ -1536,6 +1618,12 @@ version = "0.2.2"
  source = "registry+https://github.com/rust-lang/crates.io-index"
  checksum = "8ccb82d61f80a663efe1f787a51b16b5a51e3314d6ac365b08639f52387b33f3"
  
@@ -109,4 +109,4 @@ diff --git a/necsim-rust/Cargo.lock b/necsim-rust/Cargo.lock
 +
  [[package]]
  name = "vcpkg"
- version = "0.2.12"
+ version = "0.2.15"
