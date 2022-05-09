@@ -1,14 +1,21 @@
+use std::{marker::PhantomData, num::NonZeroU32, ops::ControlFlow};
+
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
 use necsim_core::{
-    cogs::{Backup, PrimeableRng, RngCore, SingularActiveLineageSampler},
+    cogs::{Backup, MathsCore, PrimeableRng, RngCore},
     landscape::{IndexedLocation, Location},
     lineage::{GlobalLineageReference, Lineage},
     reporter::NullReporter,
-    simulation::Simulation,
+    simulation::{Simulation, SimulationBuilder},
 };
-use necsim_core_bond::{ClosedUnitF64, PositiveF64};
+use necsim_core_bond::{ClosedUnitF64, OffByOneU32, PositiveF64};
 use necsim_impls_no_std::cogs::{
-    active_lineage_sampler::independent::{
-        event_time_sampler::poisson::PoissonEventTimeSampler, IndependentActiveLineageSampler,
+    active_lineage_sampler::{
+        independent::{
+            event_time_sampler::poisson::PoissonEventTimeSampler, IndependentActiveLineageSampler,
+        },
+        singular::SingularActiveLineageSampler,
     },
     coalescence_sampler::independent::IndependentCoalescenceSampler,
     dispersal_sampler::non_spatial::NonSpatialDispersalSampler,
@@ -17,6 +24,7 @@ use necsim_impls_no_std::cogs::{
     habitat::non_spatial::NonSpatialHabitat,
     immigration_entry::never::NeverImmigrationEntry,
     lineage_store::independent::IndependentLineageStore,
+    origin_sampler::{non_spatial::NonSpatialOriginSampler, pre_sampler::OriginPreSampler},
     speciation_probability::uniform::UniformSpeciationProbability,
     turnover_rate::uniform::UniformTurnoverRate,
 };
@@ -26,31 +34,34 @@ use rng::InterceptingReporter;
 
 #[derive(Debug)]
 #[allow(clippy::module_name_repetitions, clippy::type_complexity)]
-pub struct SimulationRng<G: RngCore + PrimeableRng, const SIZE: u32> {
+pub struct SimulationRng<M: MathsCore, G: RngCore<M> + PrimeableRng<M>, const SIZE: u32> {
     simulation: Simulation<
-        NonSpatialHabitat,
-        InterceptingReporter<G>,
+        M,
+        NonSpatialHabitat<M>,
+        InterceptingReporter<M, G>,
         GlobalLineageReference,
-        IndependentLineageStore<NonSpatialHabitat>,
+        IndependentLineageStore<M, NonSpatialHabitat<M>>,
         NeverEmigrationExit,
-        NonSpatialDispersalSampler<InterceptingReporter<G>>,
-        IndependentCoalescenceSampler<NonSpatialHabitat>,
+        NonSpatialDispersalSampler<M, InterceptingReporter<M, G>>,
+        IndependentCoalescenceSampler<M, NonSpatialHabitat<M>>,
         UniformTurnoverRate,
         UniformSpeciationProbability,
         IndependentEventSampler<
-            NonSpatialHabitat,
-            InterceptingReporter<G>,
+            M,
+            NonSpatialHabitat<M>,
+            InterceptingReporter<M, G>,
             NeverEmigrationExit,
-            NonSpatialDispersalSampler<InterceptingReporter<G>>,
+            NonSpatialDispersalSampler<M, InterceptingReporter<M, G>>,
             UniformTurnoverRate,
             UniformSpeciationProbability,
         >,
         NeverImmigrationEntry,
         IndependentActiveLineageSampler<
-            NonSpatialHabitat,
-            InterceptingReporter<G>,
+            M,
+            NonSpatialHabitat<M>,
+            InterceptingReporter<M, G>,
             NeverEmigrationExit,
-            NonSpatialDispersalSampler<InterceptingReporter<G>>,
+            NonSpatialDispersalSampler<M, InterceptingReporter<M, G>>,
             UniformTurnoverRate,
             UniformSpeciationProbability,
             PoissonEventTimeSampler,
@@ -58,26 +69,38 @@ pub struct SimulationRng<G: RngCore + PrimeableRng, const SIZE: u32> {
     >,
 }
 
-impl<G: RngCore + PrimeableRng, const SIZE: u32> RngCore for SimulationRng<G, SIZE> {
+impl<M: MathsCore, G: RngCore<M> + PrimeableRng<M>, const SIZE: u32> RngCore<M>
+    for SimulationRng<M, G, SIZE>
+{
     type Seed = G::Seed;
 
     fn from_seed(seed: Self::Seed) -> Self {
-        let mut simulation = Simulation::builder()
-            .habitat(NonSpatialHabitat::new((SIZE, SIZE), SIZE))
-            .rng(InterceptingReporter::<G>::from_seed(seed))
-            .speciation_probability(UniformSpeciationProbability::new(ClosedUnitF64::zero()))
-            .dispersal_sampler(NonSpatialDispersalSampler::default())
-            .lineage_reference(std::marker::PhantomData::<GlobalLineageReference>)
-            .lineage_store(IndependentLineageStore::default())
-            .emigration_exit(NeverEmigrationExit::default())
-            .coalescence_sampler(IndependentCoalescenceSampler::default())
-            .turnover_rate(UniformTurnoverRate::default())
-            .event_sampler(IndependentEventSampler::default())
-            .immigration_entry(NeverImmigrationEntry::default())
-            .active_lineage_sampler(IndependentActiveLineageSampler::empty(
+        let size = OffByOneU32::new(u64::from(SIZE)).unwrap();
+
+        let habitat = NonSpatialHabitat::new((size, size), NonZeroU32::new(SIZE).unwrap());
+
+        let (lineage_store, active_lineage_sampler, _) =
+            IndependentActiveLineageSampler::init_with_store_and_lineages(
+                NonSpatialOriginSampler::new(OriginPreSampler::none(), &habitat),
                 PoissonEventTimeSampler::new(PositiveF64::new(1.0_f64).unwrap()),
-            ))
-            .build();
+            );
+
+        let mut simulation = SimulationBuilder {
+            maths: PhantomData::<M>,
+            habitat,
+            lineage_reference: PhantomData::<GlobalLineageReference>,
+            lineage_store,
+            dispersal_sampler: NonSpatialDispersalSampler::default(),
+            coalescence_sampler: IndependentCoalescenceSampler::default(),
+            turnover_rate: UniformTurnoverRate::default(),
+            speciation_probability: UniformSpeciationProbability::new(ClosedUnitF64::zero()),
+            emigration_exit: NeverEmigrationExit::default(),
+            event_sampler: IndependentEventSampler::default(),
+            active_lineage_sampler,
+            rng: InterceptingReporter::<M, G>::from_seed(seed),
+            immigration_entry: NeverImmigrationEntry::default(),
+        }
+        .build();
 
         let lineage = Lineage::new(
             IndexedLocation::new(Location::new(0, 0), 0),
@@ -97,14 +120,24 @@ impl<G: RngCore + PrimeableRng, const SIZE: u32> RngCore for SimulationRng<G, SI
                 return sample;
             }
 
-            self.simulation
-                .simulate_incremental_early_stop(|_, steps| steps >= 256, &mut NullReporter);
+            self.simulation.simulate_incremental_early_stop(
+                |_, steps, _| {
+                    if steps >= 256 {
+                        ControlFlow::BREAK
+                    } else {
+                        ControlFlow::CONTINUE
+                    }
+                },
+                &mut NullReporter,
+            );
         }
     }
 }
 
 #[contract_trait]
-impl<G: RngCore + PrimeableRng, const SIZE: u32> Backup for SimulationRng<G, SIZE> {
+impl<M: MathsCore, G: RngCore<M> + PrimeableRng<M>, const SIZE: u32> Backup
+    for SimulationRng<M, G, SIZE>
+{
     unsafe fn backup_unchecked(&self) -> Self {
         Self {
             simulation: self.simulation.backup_unchecked(),
@@ -112,8 +145,26 @@ impl<G: RngCore + PrimeableRng, const SIZE: u32> Backup for SimulationRng<G, SIZ
     }
 }
 
-impl<G: RngCore + PrimeableRng, const SIZE: u32> Clone for SimulationRng<G, SIZE> {
+impl<M: MathsCore, G: RngCore<M> + PrimeableRng<M>, const SIZE: u32> Clone
+    for SimulationRng<M, G, SIZE>
+{
     fn clone(&self) -> Self {
         unsafe { self.backup_unchecked() }
+    }
+}
+
+impl<M: MathsCore, R: RngCore<M> + PrimeableRng<M>, const SIZE: u32> Serialize
+    for SimulationRng<M, R, SIZE>
+{
+    fn serialize<S: Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
+        unimplemented!()
+    }
+}
+
+impl<'de, M: MathsCore, R: RngCore<M> + PrimeableRng<M>, const SIZE: u32> Deserialize<'de>
+    for SimulationRng<M, R, SIZE>
+{
+    fn deserialize<D: Deserializer<'de>>(_deserializer: D) -> Result<Self, D::Error> {
+        unimplemented!()
     }
 }

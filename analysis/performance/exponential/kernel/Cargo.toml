@@ -5,12 +5,15 @@ authors = ["Momo Langenstein <ml5717@ic.ac.uk>"]
 license = "MIT OR Apache-2.0"
 edition = "2018"
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 necsim-core = { path = "../../../../necsim/core", features = ["cuda"] }
-necsim-core-bond = { path = "../../../../necsim/core/bond", features = ["cuda"] }
-rust-cuda = { path = "../../../../rust-cuda", features = [] }
+necsim-core-bond = { path = "../../../../necsim/core/bond" }
+rust-cuda = { git = "https://github.com/MomoLangenstein/rust-cuda", branch = "main", features = [] }
 necsim-impls-no-std = { path = "../../../../necsim/impls/no-std", features = ["cuda"] }
 necsim-impls-cuda = { path = "../../../../necsim/impls/cuda" }
-contracts = { path = "../../../../third-party/contracts" }
+contracts = "0.6.3"

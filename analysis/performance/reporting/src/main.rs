@@ -4,18 +4,16 @@
 use std::{convert::TryFrom, marker::PhantomData};
 
 use log::LevelFilter;
-use necsim_core_bond::{ClosedUnitF64, NonNegativeF64};
-use necsim_impls_std::cogs::rng::pcg::Pcg;
 use structopt::{
     clap::{Error, ErrorKind},
     StructOpt,
 };
 
-use necsim_core::{
-    cogs::{LineageStore, RngCore},
-    reporter::Reporter,
-    simulation::Simulation,
-};
+use necsim_core_bond::{ClosedUnitF64, NonNegativeF64};
+use necsim_core_maths::IntrinsicsMathsCore;
+use necsim_impls_std::cogs::rng::pcg::Pcg;
+
+use necsim_core::{cogs::SeedableRng, reporter::Reporter, simulation::SimulationBuilder};
 use necsim_impls_no_std::cogs::{
     active_lineage_sampler::classical::ClassicalActiveLineageSampler,
     coalescence_sampler::unconditional::UnconditionalCoalescenceSampler,
@@ -24,6 +22,7 @@ use necsim_impls_no_std::cogs::{
     event_sampler::unconditional::UnconditionalEventSampler,
     habitat::almost_infinite::AlmostInfiniteHabitat,
     immigration_entry::never::NeverImmigrationEntry,
+    lineage_reference::in_memory::InMemoryLineageReference,
     lineage_store::coherent::globally::almost_infinite::AlmostInfiniteLineageStore,
     origin_sampler::{almost_infinite::AlmostInfiniteOriginSampler, pre_sampler::OriginPreSampler},
     speciation_probability::uniform::UniformSpeciationProbability,
@@ -55,7 +54,7 @@ struct Options {
     #[structopt(long)]
     seed: u64,
     #[structopt(long)]
-    radius: u32,
+    radius: u16,
     #[structopt(long, parse(try_from_str = try_from_str))]
     sigma: NonNegativeF64,
     #[structopt(long, parse(try_from_str = try_from_str))]
@@ -91,7 +90,7 @@ fn main() {
     match options.mode {
         ReportingMode::ProgressOnly => simulate(&options, necsim_core::ReporterGroup![progress]),
         ReportingMode::ProgressSpeciation => {
-            simulate(&options, necsim_core::ReporterGroup![progress, speciation])
+            simulate(&options, necsim_core::ReporterGroup![progress, speciation]);
         },
         ReportingMode::ProgressSpeciationDispersal => simulate(
             &options,
@@ -107,33 +106,36 @@ fn simulate<R: Reporter>(options: &Options, mut reporter: R) {
     let dispersal_sampler = AlmostInfiniteNormalDispersalSampler::new(options.sigma);
     let turnover_rate = UniformTurnoverRate::default();
     let speciation_probability = UniformSpeciationProbability::new(options.speciation);
-    let rng = Pcg::seed_from_u64(options.seed);
-    let lineage_store =
-        AlmostInfiniteLineageStore::from_origin_sampler(AlmostInfiniteOriginSampler::new(
-            OriginPreSampler::all().percentage(options.sample.get()),
+    let rng = Pcg::<IntrinsicsMathsCore>::seed_from_u64(options.seed);
+
+    let (lineage_store, active_lineage_sampler): (AlmostInfiniteLineageStore<_>, _) =
+        ClassicalActiveLineageSampler::init_with_store(AlmostInfiniteOriginSampler::new(
+            OriginPreSampler::all().percentage(options.sample),
             &habitat,
             options.radius,
         ));
+
     let coalescence_sampler = UnconditionalCoalescenceSampler::default();
     let emigration_exit = NeverEmigrationExit::default();
     let event_sampler = UnconditionalEventSampler::default();
     let immigration_entry = NeverImmigrationEntry::default();
-    let active_lineage_sampler = ClassicalActiveLineageSampler::new(&lineage_store);
 
-    let simulation = Simulation::builder()
-        .habitat(habitat)
-        .rng(rng)
-        .speciation_probability(speciation_probability)
-        .dispersal_sampler(dispersal_sampler)
-        .lineage_reference(PhantomData)
-        .lineage_store(lineage_store)
-        .emigration_exit(emigration_exit)
-        .coalescence_sampler(coalescence_sampler)
-        .turnover_rate(turnover_rate)
-        .event_sampler(event_sampler)
-        .immigration_entry(immigration_entry)
-        .active_lineage_sampler(active_lineage_sampler)
-        .build();
+    let simulation = SimulationBuilder {
+        maths: PhantomData::<IntrinsicsMathsCore>,
+        habitat,
+        lineage_reference: PhantomData::<InMemoryLineageReference>,
+        lineage_store,
+        dispersal_sampler,
+        coalescence_sampler,
+        turnover_rate,
+        speciation_probability,
+        emigration_exit,
+        event_sampler,
+        active_lineage_sampler,
+        rng,
+        immigration_entry,
+    }
+    .build();
 
     simulation.simulate(&mut reporter);
 

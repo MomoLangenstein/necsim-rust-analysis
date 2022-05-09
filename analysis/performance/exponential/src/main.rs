@@ -1,30 +1,46 @@
 #![deny(clippy::pedantic)]
 #![feature(associated_type_bounds)]
 
-#[macro_use]
-extern crate contracts;
-
 use std::{
     convert::TryFrom,
+    num::NonZeroU32,
+    sync::atomic::AtomicU64,
     time::{Duration, Instant},
 };
 
-use necsim_core_bond::{NonNegativeF64, PositiveF64};
 use structopt::{
     clap::{Error, ErrorKind},
     StructOpt,
 };
 
 use necsim_core::{
-    cogs::{Backup, Habitat, PrimeableRng, RngCore, TurnoverRate},
+    cogs::{Habitat, MathsCore, PrimeableRng, SeedableRng, TurnoverRate},
     landscape::{IndexedLocation, Location},
 };
+use necsim_core_bond::{NonNegativeF64, OffByOneU32, PositiveF64};
+use necsim_core_maths::IntrinsicsMathsCore;
 use necsim_impls_no_std::cogs::{
     active_lineage_sampler::independent::event_time_sampler::{
         exp::ExpEventTimeSampler, poisson::PoissonEventTimeSampler, EventTimeSampler,
     },
     habitat::non_spatial::NonSpatialHabitat,
     rng::wyhash::WyHash,
+};
+
+use rust_cuda::{
+    host::{CudaDropWrapper, LaunchConfig, LaunchPackage, Launcher, TypedKernel},
+    rustacuda::{
+        context::{Context, ContextFlags},
+        device::Device,
+        error::CudaResult,
+        function::{BlockSize, GridSize},
+        stream::{Stream, StreamFlags},
+    },
+};
+
+use analysis_performance_exponential_kernel::{
+    link_exp_kernel, link_poisson_kernel, ExpKernel, ExpKernelArgs, PoissonKernel,
+    PoissonKernelArgs, UniformTurnoverRate,
 };
 
 #[derive(Debug, StructOpt)]
@@ -66,18 +82,19 @@ fn main() {
     let options = Options::from_args();
 
     if options.cuda {
-        main_gpu(&options)
+        main_gpu(&options);
     } else {
-        main_cpu(&options)
+        main_cpu(&options);
     }
 }
 
 fn main_cpu(options: &Options) {
-    let habitat = NonSpatialHabitat::new((1, 1), 1);
-    let rng = WyHash::seed_from_u64(options.seed);
-    let turnover_rate = UniformTurnoverRate {
-        turnover_rate: options.lambda,
-    };
+    let habitat = NonSpatialHabitat::new(
+        (OffByOneU32::one(), OffByOneU32::one()),
+        NonZeroU32::new(1).unwrap(),
+    );
+    let rng = WyHash::<IntrinsicsMathsCore>::seed_from_u64(options.seed);
+    let turnover_rate = UniformTurnoverRate::new(options.lambda);
     let indexed_location = IndexedLocation::new(Location::new(0, 0), 0);
 
     match options.mode {
@@ -101,12 +118,6 @@ fn main_cpu(options: &Options) {
 }
 
 fn main_gpu(options: &Options) {
-    use rust_cuda::{
-        common::{DeviceBoxConst, DeviceBoxMut},
-        rustacuda::{launch, memory::DeviceBox, prelude::*},
-    };
-    use std::ffi::CString;
-
     rust_cuda::rustacuda::quick_init().unwrap();
 
     // Get the first device
@@ -115,56 +126,42 @@ fn main_gpu(options: &Options) {
     // Create a context associated to this device
     let _context = Context::create_and_push(ContextFlags::SCHED_AUTO, device).unwrap();
 
-    // Load the module containing the function we want to call
-    let module_data = CString::new(include_str!(env!("CUDA_PTX_KERNEL"))).unwrap();
-    let module = Module::load_from_string(&module_data).unwrap();
-
     // Create a stream to submit work to
     let stream = Stream::new(StreamFlags::NON_BLOCKING, None).unwrap();
 
-    let limit = DeviceBox::new(&options.limit).unwrap();
-
-    let mut total_cycles_sum = DeviceBox::new(&0_u64).unwrap();
-    let mut total_time_sum = DeviceBox::new(&0_u64).unwrap();
+    let mut total_cycles_sum = AtomicU64::new(0_u64);
+    let mut total_time_sum = AtomicU64::new(0_u64);
 
     match options.mode {
-        SamplingMode::Exponential => unsafe {
-            launch!(module.benchmark_exp<<<256, 32, 0, stream>>>(
+        SamplingMode::Exponential => {
+            let mut kernel = BenchmarkExpKernel::try_new(stream, 256.into(), 32.into()).unwrap();
+
+            kernel.benchmark_exp(
                 options.seed,
                 options.lambda,
                 options.delta_t,
-                DeviceBoxConst::from(&limit),
-                DeviceBoxMut::from(&mut total_cycles_sum),
-                DeviceBoxMut::from(&mut total_time_sum)
-            ))
-            .unwrap()
+                &options.limit.to_le_bytes(),
+                &total_cycles_sum,
+                &total_time_sum,
+            )
         },
-        SamplingMode::Poisson => unsafe {
-            launch!(module.benchmark_poisson<<<256, 32, 0, stream>>>(
+        SamplingMode::Poisson => {
+            let mut kernel =
+                BenchmarkPoissonKernel::try_new(stream, 256.into(), 32.into()).unwrap();
+
+            kernel.benchmark_poisson(
                 options.seed,
                 options.lambda,
                 options.delta_t,
-                DeviceBoxConst::from(&limit),
-                DeviceBoxMut::from(&mut total_cycles_sum),
-                DeviceBoxMut::from(&mut total_time_sum)
-            ))
-            .unwrap()
+                &options.limit.to_le_bytes(),
+                &total_cycles_sum,
+                &total_time_sum,
+            )
         },
     }
+    .unwrap();
 
-    // The kernel launch is asynchronous, so we wait for the kernel to finish
-    // executing
-    stream.synchronize().unwrap();
-
-    let mut result_total_cycles_sum = 0_u64;
-    let mut result_total_time_sum = 0_u64;
-
-    total_cycles_sum
-        .copy_to(&mut result_total_cycles_sum)
-        .unwrap();
-    total_time_sum.copy_to(&mut result_total_time_sum).unwrap();
-
-    let execution_time = Duration::from_nanos(result_total_time_sum / (32 * 256));
+    let execution_time = Duration::from_nanos(*total_time_sum.get_mut() / (32 * 256));
 
     println!(
         "Drawing {} exponential inter-event times with {:?} took {:?} ({}s) [{} cycles].",
@@ -172,16 +169,17 @@ fn main_gpu(options: &Options) {
         options.mode,
         execution_time,
         execution_time.as_secs_f64(),
-        result_total_cycles_sum / (32 * 256),
+        *total_cycles_sum.get_mut() / (32 * 256),
     );
 }
 
 #[allow(clippy::needless_pass_by_value)]
 fn sample_exponential_inter_event_times<
-    H: Habitat,
-    G: PrimeableRng,
-    T: TurnoverRate<H>,
-    E: EventTimeSampler<H, G, T>,
+    M: MathsCore,
+    H: Habitat<M>,
+    G: PrimeableRng<M>,
+    T: TurnoverRate<M, H>,
+    E: EventTimeSampler<M, H, G, T>,
 >(
     habitat: H,
     mut rng: G,
@@ -217,28 +215,98 @@ fn sample_exponential_inter_event_times<
     );
 }
 
-#[derive(Debug)]
-pub struct UniformTurnoverRate {
-    turnover_rate: PositiveF64,
+pub struct BenchmarkPoissonKernel {
+    kernel: TypedKernel<dyn PoissonKernel>,
+    stream: CudaDropWrapper<Stream>,
+    grid: GridSize,
+    block: BlockSize,
+    watcher: (),
 }
 
-#[contract_trait]
-impl Backup for UniformTurnoverRate {
-    unsafe fn backup_unchecked(&self) -> Self {
-        Self {
-            turnover_rate: self.turnover_rate,
+link_poisson_kernel!();
+
+impl BenchmarkPoissonKernel {
+    fn try_new(stream: Stream, grid: GridSize, block: BlockSize) -> CudaResult<Self>
+    where
+        Self: PoissonKernel,
+    {
+        let stream = CudaDropWrapper::from(stream);
+        let kernel = Self::new_kernel()?;
+
+        Ok(Self {
+            kernel,
+            stream,
+            grid,
+            block,
+            watcher: (),
+        })
+    }
+}
+
+impl Launcher for BenchmarkPoissonKernel {
+    type CompilationWatcher = ();
+    type KernelTraitObject = dyn PoissonKernel;
+
+    fn get_launch_package(&mut self) -> LaunchPackage<Self> {
+        LaunchPackage {
+            config: LaunchConfig {
+                grid: self.grid.clone(),
+                block: self.block.clone(),
+                shared_memory_size: 0_u32,
+            },
+
+            kernel: &mut self.kernel,
+            stream: &mut self.stream,
+
+            watcher: &mut self.watcher,
         }
     }
 }
 
-#[contract_trait]
-impl<H: Habitat> TurnoverRate<H> for UniformTurnoverRate {
-    #[must_use]
-    #[inline]
-    fn get_turnover_rate_at_location(&self, _location: &Location, _habitat: &H) -> NonNegativeF64 {
-        // Use a volatile read to ensure that the turnover rate cannot be
-        //  optimised out of this benchmark test
+pub struct BenchmarkExpKernel {
+    kernel: TypedKernel<dyn ExpKernel>,
+    stream: CudaDropWrapper<Stream>,
+    grid: GridSize,
+    block: BlockSize,
+    watcher: (),
+}
 
-        unsafe { core::ptr::read_volatile(&self.turnover_rate) }.into()
+link_exp_kernel!();
+
+impl BenchmarkExpKernel {
+    fn try_new(stream: Stream, grid: GridSize, block: BlockSize) -> CudaResult<Self>
+    where
+        Self: ExpKernel,
+    {
+        let stream = CudaDropWrapper::from(stream);
+        let kernel = Self::new_kernel()?;
+
+        Ok(Self {
+            kernel,
+            stream,
+            grid,
+            block,
+            watcher: (),
+        })
+    }
+}
+
+impl Launcher for BenchmarkExpKernel {
+    type CompilationWatcher = ();
+    type KernelTraitObject = dyn ExpKernel;
+
+    fn get_launch_package(&mut self) -> LaunchPackage<Self> {
+        LaunchPackage {
+            config: LaunchConfig {
+                grid: self.grid.clone(),
+                block: self.block.clone(),
+                shared_memory_size: 0_u32,
+            },
+
+            kernel: &mut self.kernel,
+            stream: &mut self.stream,
+
+            watcher: &mut self.watcher,
+        }
     }
 }
