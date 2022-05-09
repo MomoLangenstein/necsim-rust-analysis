@@ -8,14 +8,13 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+analysis-performance-exponential-kernel = { path = "kernel" }
+
 necsim-core = { path = "../../../necsim/core", features = ["cuda"] }
-necsim-core-bond = { path = "../../../necsim/core/bond", features = ["cuda"] }
+necsim-core-bond = { path = "../../../necsim/core/bond" }
+necsim-core-maths = { path = "../../../necsim/core/maths" }
 necsim-impls-no-std = { path = "../../../necsim/impls/no-std" }
 
-rust-cuda = { path = "../../../rust-cuda", features = ["host"] }
+rust-cuda = { git = "https://github.com/MomoLangenstein/rust-cuda", branch = "main", features = ["host"] }
 
-contracts = { path = "../../../third-party/contracts" }
-structopt = "0.3.21"
-
-[build-dependencies]
-ptx-builder = { path = "../../../third-party/rust-ptx-builder" }
+structopt = "0.3"
